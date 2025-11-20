@@ -1,0 +1,70 @@
+name: Request New Framework Support
+description: Suggest adding support for a new framework
+title: "[Framework Request]: "
+labels: ["enhancement", "framework"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a new framework! This will help make the workflow more useful for everyone.
+
+  - type: input
+    id: framework-name
+    attributes:
+      label: Framework Name
+      description: What framework should we add support for?
+      placeholder: e.g., Vue.js, Angular, Django, Laravel
+    validations:
+      required: true
+
+  - type: textarea
+    id: common-issues
+    attributes:
+      label: Common Issues & Bugs
+      description: What are the most common bugs and errors in this framework?
+      placeholder: |
+        - Issue 1: Description
+        - Issue 2: Description
+        - Issue 3: Description
+    validations:
+      required: true
+
+  - type: textarea
+    id: best-practices
+    attributes:
+      label: Framework Best Practices
+      description: What are the key best practices that should be checked?
+      placeholder: |
+        - Practice 1
+        - Practice 2
+        - Practice 3
+    validations:
+      required: true
+
+  - type: textarea
+    id: anti-patterns
+    attributes:
+      label: Common Anti-patterns
+      description: What patterns should Claude flag as problematic?
+      placeholder: |
+        - Anti-pattern 1
+        - Anti-pattern 2
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional Context
+      description: Any other information that would help create comprehensive review rules?
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      description: Would you like to contribute the review rules yourself?
+      options:
+        - label: I'd like to create the rules file and submit a PR
+          required: false

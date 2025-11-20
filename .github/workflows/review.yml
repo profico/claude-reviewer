@@ -1,0 +1,197 @@
+name: Claude Code Review
+
+# Make this workflow callable by other repositories
+on:
+  workflow_call:
+    inputs:
+      framework:
+        type: string
+        required: false
+        default: 'generic'
+        description: 'Framework type: next, nest, react, generic, etc'
+      pr_number:
+        type: number
+        required: true
+        description: 'Pull request number to review'
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+        description: 'Anthropic API key for Claude'
+
+jobs:
+  delete-old-claude-comments:
+    # Currently, the claude-code-action does not support updating its own comments.
+    # https://github.com/anthropics/claude-code-action/issues/37
+    name: cleanup-old-claude-comments
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+
+    steps:
+      - name: Check for claude label
+        id: check-label
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log(`Checking PR ${context.payload.pull_request.number} for 'claude' label...`);
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number
+            });
+            const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
+            console.log(`PR has ${pr.labels.length} labels: ${pr.labels.map(l => l.name).join(', ')}`);
+            console.log(`Has 'claude' label: ${hasClaudeLabel}`);
+            core.setOutput('has-claude-label', hasClaudeLabel.toString());
+
+      - name: Clean up old comments
+        if: steps.check-label.outputs.has-claude-label == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const params = { pull_number: context.payload.pull_request.number, owner: context.repo.owner, repo: context.repo.repo }
+            console.log(`Checking PR ${params.pull_number} for claude[bot] comments...`);
+
+            // Delete issue comments (top-level comments)
+            const issueComments = await github.rest.issues.listComments({ issue_number: params.pull_number, owner: params.owner, repo: params.repo });
+            console.log(`Found ${issueComments.data.length} issue comments`);
+
+            // Delete review comments (inline comments)
+            const reviewComments = await github.rest.pulls.listReviewComments(params);
+            console.log(`Found ${reviewComments.data.length} review comments`);
+
+            let deletedCount = 0;
+
+            // Delete issue comments
+            for (const comment of issueComments.data) {
+              if (comment.user.login === 'claude[bot]') {
+                console.log(`Deleting issue comment ${comment.id} from claude[bot]`);
+                await github.rest.issues.deleteComment({ issue_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
+                deletedCount++;
+              }
+            }
+
+            // Delete review comments
+            for (const comment of reviewComments.data) {
+              if (comment.user.login === 'claude[bot]') {
+                console.log(`Deleting review comment ${comment.id} from claude[bot]`);
+                await github.rest.pulls.deleteReviewComment({ pull_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
+                deletedCount++;
+              }
+            }
+
+            console.log(`Deleted ${deletedCount} claude[bot] comments`);
+  review:
+    name: claude-review-pull-request
+    runs-on: ubuntu-latest
+    needs: delete-old-claude-comments
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+
+      - name: Check for claude label
+        id: check-label-review
+        uses: actions/github-script@v7
+        with:
+          script: |
+            console.log(`Checking PR ${context.payload.pull_request.number} for 'claude' label...`);
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number
+            });
+            const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
+            console.log(`PR has ${pr.labels.length} labels: ${pr.labels.map(l => l.name).join(', ')}`);
+            console.log(`Has 'claude' label: ${hasClaudeLabel}`);
+            core.setOutput('has-claude-label', hasClaudeLabel.toString());
+
+      - name: Read cursor rules
+        if: steps.check-label-review.outputs.has-claude-label == 'true'
+        id: cursor-rules
+        run: |
+          if [ -d ".cursor/rules" ] && [ "$(ls .cursor/rules/*.mdc 2>/dev/null | wc -l)" -gt 0 ]; then
+            delimiter="$(openssl rand -hex 8)"
+            echo "content<<${delimiter}" >> $GITHUB_OUTPUT
+            cat .cursor/rules/*.mdc >> $GITHUB_OUTPUT
+            echo "" >> $GITHUB_OUTPUT
+            echo "${delimiter}" >> $GITHUB_OUTPUT
+          else
+            echo "content=No cursor rules found" >> $GITHUB_OUTPUT
+          fi
+
+      # Download framework-specific rules from this repository
+      - name: Download framework rules
+        if: steps.check-label-review.outputs.has-claude-label == 'true'
+        id: framework-rules
+        run: |
+          FRAMEWORK="${{ inputs.framework }}"
+          RULES_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/rules/${FRAMEWORK}.md"
+          
+          echo "Attempting to download rules for framework: ${FRAMEWORK}"
+          echo "URL: ${RULES_URL}"
+          
+          delimiter="$(openssl rand -hex 8)"
+          echo "content<<${delimiter}" >> $GITHUB_OUTPUT
+          
+          # Try to download framework-specific rules
+          if curl -f -s "${RULES_URL}" -o /tmp/framework-rules.md 2>/dev/null; then
+            echo "Successfully downloaded ${FRAMEWORK} rules"
+            cat /tmp/framework-rules.md >> $GITHUB_OUTPUT
+          else
+            echo "No framework-specific rules found for: ${FRAMEWORK}" >> $GITHUB_OUTPUT
+            echo "Using default review guidelines." >> $GITHUB_OUTPUT
+          fi
+          
+          echo "" >> $GITHUB_OUTPUT
+          echo "${delimiter}" >> $GITHUB_OUTPUT
+
+      - uses: anthropics/claude-code-action@v1
+        if: steps.check-label-review.outputs.has-claude-label == 'true'
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
+            FRAMEWORK: ${{ inputs.framework }}
+
+            Review this pull request and ONLY comment on:
+            - Actual bugs, errors, or broken functionality
+            - Security vulnerabilities
+            - Critical performance issues that will cause problems
+            - Type errors or runtime errors
+
+            CRITICAL RULES:
+            - DO NOT praise or compliment code
+            - DO NOT comment on lines that are correct or well-written
+            - DO NOT suggest improvements unless they fix a bug or improve the code
+            - For each comment, explain WHY it's a bug/error and what will break
+            - Keep comments concise and technical - no fluff
+            - If there are no bugs, post nothing
+            - Ignore generated files, lock files, and build artifacts
+
+            Codebase context:
+            - Follow CLAUDE.md (if available), and the project rules.
+            - You can find the project rules as markdown files in the .cursor/rules directory.
+            - Treat CLAUDE.md and the rules like gospel.
+
+            CURSOR RULES CONTENT:
+            ${{ steps.cursor-rules.outputs.content }}
+
+            FRAMEWORK-SPECIFIC RULES (${{ inputs.framework }}):
+            ${{ steps.framework-rules.outputs.content }}
+
+            Note: The PR branch is already checked out in the current working directory.
+
+            Use `gh pr comment` for top-level feedback.
+            Use `mcp__github_inline_comment__create_inline_comment` to highlight specific code issues.
+            If you already left an inline comment, don't leave another one. You may link to the existing comment from
+            the new summary if it's still relevant.
+            Only post GitHub comments - don't submit review text as messages.
+
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"

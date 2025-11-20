@@ -1,0 +1,17 @@
+name: Claude (Self-Review)
+
+# This workflow uses the reusable workflow in this repository
+# to review PRs in this repository itself (dogfooding)
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  claude-review:
+    uses: ./.github/workflows/review.yml
+    with:
+      framework: 'generic'
+      pr_number: ${{ github.event.pull_request.number }}
+    secrets:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
