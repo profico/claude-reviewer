@@ -26,6 +26,10 @@ on:
 
 jobs:
   claude-review:
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'next'  # Options: next, nest, react, generic
@@ -119,6 +123,10 @@ on:
 
 jobs:
   claude-review:
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'next'
@@ -138,6 +146,10 @@ on:
 
 jobs:
   claude-review:
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'nest'
@@ -157,6 +169,10 @@ on:
 
 jobs:
   claude-review:
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'react'
@@ -176,6 +192,10 @@ on:
 
 jobs:
   claude-review:
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'generic'  # or omit this line, as 'generic' is the default
@@ -246,11 +266,13 @@ Claude will NOT comment on:
 
 ## Permissions
 
-The workflow requires these permissions (automatically granted when using `workflow_call`):
+The workflow requires these permissions (must be explicitly granted in the calling workflow):
 
 - `contents: read` - To read the repository code
 - `pull-requests: write` - To post review comments
 - `id-token: write` - For OIDC authentication
+
+**Important:** You must add the `permissions` block to your workflow job as shown in all examples above. Reusable workflows do not inherit permissions by default.
 
 ## Troubleshooting
 
