@@ -7,7 +7,7 @@ A reusable GitHub Actions workflow for AI-powered code reviews using Claude, wit
 - Framework-specific review rules (Next.js, NestJS, React, and more)
 - Reads project-specific cursor rules
 - Automated cleanup of old comments
-- Label-based activation (claude label)
+- Label-based activation
 - Inline and top-level comments
 - Focuses only on bugs, errors, and critical issues
 
@@ -33,6 +33,7 @@ jobs:
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'next'  # Options: next, nest, react, generic
+      trigger: 'auto'    # Options: label, auto (auto runs on every PR)
       pr_number: ${{ github.event.pull_request.number }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -46,14 +47,19 @@ jobs:
 4. Value: Your Anthropic API key from console.anthropic.com
 
 ### Step 3: Use the Label
+You can control when reviews run with the `trigger` input:
 
-Add the `claude` label to any pull request you want reviewed.
+- `label`: run only when the `claude` label is present on the PR
+- `auto` (default): run on every PR (no label required)
+
+For simple setups, keep using `on: pull_request` as in the examples above; you do not need `workflow_run` to test or use this workflow.
 
 ## Workflow Inputs
 
 | Input | Required | Default | Description |
 |-------|----------|---------|-------------|
 | `framework` | No | `generic` | Framework type: `next`, `nest`, `react`, `generic` |
+| `trigger` | No | `auto` | Trigger mode: `label` (requires `claude` label) or `auto` (runs on every PR) |
 | `pr_number` | Yes | - | Pull request number to review |
 
 ## Required Secrets
@@ -130,6 +136,7 @@ jobs:
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'next'
+      trigger: 'auto'
       pr_number: ${{ github.event.pull_request.number }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -153,6 +160,7 @@ jobs:
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'nest'
+      trigger: 'auto'
       pr_number: ${{ github.event.pull_request.number }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -176,6 +184,7 @@ jobs:
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'react'
+      trigger: 'auto'
       pr_number: ${{ github.event.pull_request.number }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -199,6 +208,7 @@ jobs:
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'generic'  # or omit this line, as 'generic' is the default
+      trigger: 'auto'
       pr_number: ${{ github.event.pull_request.number }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -239,8 +249,8 @@ uses: profico/claude-reviewer/.github/workflows/review.yml@abc123def456
 ## How It Works
 
 1. External repository creates a PR
-2. Workflow checks for `claude` label on the PR
-3. Downloads framework-specific rules from this repository
+2. Workflow checks PR for the `claude` label based on the `trigger` input
+3. Downloads framework-specific rules fromworkflow_ this repository
 4. Reads project-specific `.cursor/rules/*.mdc` files
 5. Claude reviews the PR with combined context
 6. Posts inline comments for specific issues

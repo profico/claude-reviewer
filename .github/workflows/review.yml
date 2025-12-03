@@ -9,6 +9,11 @@ on:
         required: false
         default: 'generic'
         description: 'Framework type: next, nest, react, generic, etc'
+      trigger:
+        type: string
+        required: false
+        default: 'auto'
+        description: "Trigger mode: 'label' or 'auto' (auto runs for all PRs)"
       pr_number:
         type: number
         required: true
@@ -19,72 +24,66 @@ on:
         description: 'Anthropic API key for Claude'
 
 jobs:
-  delete-old-claude-comments:
-    # Currently, the claude-code-action does not support updating its own comments.
-    # https://github.com/anthropics/claude-code-action/issues/37
-    name: cleanup-old-claude-comments
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-
-    steps:
-      - name: Check for claude label
-        id: check-label
-        uses: actions/github-script@v7
-        with:
-          script: |
-            console.log(`Checking PR ${context.payload.pull_request.number} for 'claude' label...`);
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number
-            });
-            const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
-            console.log(`PR has ${pr.labels.length} labels: ${pr.labels.map(l => l.name).join(', ')}`);
-            console.log(`Has 'claude' label: ${hasClaudeLabel}`);
-            core.setOutput('has-claude-label', hasClaudeLabel.toString());
-
-      - name: Clean up old comments
-        if: steps.check-label.outputs.has-claude-label == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const params = { pull_number: context.payload.pull_request.number, owner: context.repo.owner, repo: context.repo.repo }
-            console.log(`Checking PR ${params.pull_number} for claude[bot] comments...`);
-
-            // Delete issue comments (top-level comments)
-            const issueComments = await github.rest.issues.listComments({ issue_number: params.pull_number, owner: params.owner, repo: params.repo });
-            console.log(`Found ${issueComments.data.length} issue comments`);
-
-            // Delete review comments (inline comments)
-            const reviewComments = await github.rest.pulls.listReviewComments(params);
-            console.log(`Found ${reviewComments.data.length} review comments`);
-
-            let deletedCount = 0;
-
-            // Delete issue comments
-            for (const comment of issueComments.data) {
-              if (comment.user.login === 'claude[bot]') {
-                console.log(`Deleting issue comment ${comment.id} from claude[bot]`);
-                await github.rest.issues.deleteComment({ issue_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
-                deletedCount++;
-              }
-            }
-
-            // Delete review comments
-            for (const comment of reviewComments.data) {
-              if (comment.user.login === 'claude[bot]') {
-                console.log(`Deleting review comment ${comment.id} from claude[bot]`);
-                await github.rest.pulls.deleteReviewComment({ pull_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
-                deletedCount++;
-              }
-            }
-
-            console.log(`Deleted ${deletedCount} claude[bot] comments`);
+  # delete-old-claude-comments:
+  #   name: cleanup-old-claude-comments
+  #   runs-on: ubuntu-latest
+  #   permissions:
+  #     pull-requests: write
+  #
+  #   steps:
+  #     - name: Determine trigger
+  #       id: determine-trigger
+  #       uses: actions/github-script@v7
+  #       with:
+  #         script: |
+  #           const mode = '${{ inputs.trigger }}';
+  #           const { data: pr } = await github.rest.pulls.get({
+  #             owner: context.repo.owner,
+  #             repo: context.repo.repo,
+  #             pull_number: context.payload.pull_request.number
+  #           });
+  #           const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
+  #           let shouldRun = false;
+  #           if (mode === 'label') {
+  #             shouldRun = hasClaudeLabel;
+  #           } else {
+  #             shouldRun = true;
+  #           }
+  #           core.setOutput('has-claude-label', hasClaudeLabel.toString());
+  #           core.setOutput('should-run', shouldRun.toString());
+  #
+  #     - name: Clean up old comments
+  #       if: steps.determine-trigger.outputs.should-run == 'true'
+  #       uses: actions/github-script@v7
+  #       with:
+  #         script: |
+  #           const params = { pull_number: context.payload.pull_request.number, owner: context.repo.owner, repo: context.repo.repo }
+  #           console.log(`Checking PR ${params.pull_number} for claude[bot] comments...`);
+  #
+  #           const issueComments = await github.rest.issues.listComments({ issue_number: params.pull_number, owner: params.owner, repo: params.repo });
+  #           const reviewComments = await github.rest.pulls.listReviewComments(params);
+  #
+  #           let deletedCount = 0;
+  #
+  #           for (const comment of issueComments.data) {
+  #             if (comment.user.login === 'claude[bot]') {
+  #               await github.rest.issues.deleteComment({ issue_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
+  #               deletedCount++;
+  #             }
+  #           }
+  #
+  #           for (const comment of reviewComments.data) {
+  #             if (comment.user.login === 'claude[bot]') {
+  #               await github.rest.pulls.deleteReviewComment({ pull_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
+  #               deletedCount++;
+  #             }
+  #           }
+  #
+  #           console.log(`Deleted ${deletedCount} claude[bot] comments`);
+  review:
   review:
     name: claude-review-pull-request
     runs-on: ubuntu-latest
-    needs: delete-old-claude-comments
     permissions:
       contents: read
       pull-requests: write
@@ -94,24 +93,29 @@ jobs:
         with:
           fetch-depth: 1
 
-      - name: Check for claude label
-        id: check-label-review
+      - name: Determine trigger
+        id: determine-trigger
         uses: actions/github-script@v7
         with:
           script: |
-            console.log(`Checking PR ${context.payload.pull_request.number} for 'claude' label...`);
+            const mode = '${{ inputs.trigger }}';
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.payload.pull_request.number
             });
             const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
-            console.log(`PR has ${pr.labels.length} labels: ${pr.labels.map(l => l.name).join(', ')}`);
-            console.log(`Has 'claude' label: ${hasClaudeLabel}`);
+            let shouldRun = false;
+            if (mode === 'label') {
+              shouldRun = hasClaudeLabel;
+            } else {
+              shouldRun = true;
+            }
             core.setOutput('has-claude-label', hasClaudeLabel.toString());
+            core.setOutput('should-run', shouldRun.toString());
 
       - name: Read cursor rules
-        if: steps.check-label-review.outputs.has-claude-label == 'true'
+        if: steps.determine-trigger.outputs.should-run == 'true'
         id: cursor-rules
         run: |
           if [ -d ".cursor/rules" ] && [ "$(ls .cursor/rules/*.mdc 2>/dev/null | wc -l)" -gt 0 ]; then
@@ -126,7 +130,7 @@ jobs:
 
       # Download framework-specific rules from this repository
       - name: Download framework rules
-        if: steps.check-label-review.outputs.has-claude-label == 'true'
+        if: steps.determine-trigger.outputs.should-run == 'true'
         id: framework-rules
         run: |
           FRAMEWORK="${{ inputs.framework }}"
@@ -151,9 +155,10 @@ jobs:
           echo "${delimiter}" >> $GITHUB_OUTPUT
 
       - uses: anthropics/claude-code-action@v1
-        if: steps.check-label-review.outputs.has-claude-label == 'true'
+        if: steps.determine-trigger.outputs.should-run == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          use_sticky_comment: true
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
