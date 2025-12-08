@@ -79,8 +79,6 @@ jobs:
   #             }
   #           }
   #
-  #           console.log(`Deleted ${deletedCount} claude[bot] comments`);
-  review:
   review:
     name: claude-review-pull-request
     runs-on: ubuntu-latest
