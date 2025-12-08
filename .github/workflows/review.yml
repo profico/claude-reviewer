@@ -165,12 +165,15 @@ jobs:
             FRAMEWORK: ${{ inputs.framework }}
 
             PR CONTEXT COMPLETION:
-            - Fetch PR metadata with `gh pr view ${{ github.event.pull_request.number }} --json title,body,closingIssuesReferences,number`.
+            - Fetch PR metadata with `gh pr view ${{ github.event.pull_request.number }} --json title,body,closingIssuesReferences,number,files`.
             - For each linked issue, fetch `title` and `body` with `gh issue view <issue> --json title,body,labels,number`.
             - If the PR description is empty, placeholder text, or missing a what/why summary, build a concise markdown body that includes: summary, linked issues, requirements or acceptance criteria from the issue, risks/affected areas, and testing status (say "Testing: not provided" if unknown).
             - If the PR already has meaningful content, append an "Issue context" section with any missing details instead of overwriting user text.
             - Update the PR body with `gh pr edit ${{ github.event.pull_request.number }} --body "<markdown>"` only when you have new context to add.
-            - If no issue is linked, search for an obvious match: `gh issue list --state open --search "<PR title>" --json number,title,body,labels`. If a single issue is a clear match, append `Fixes #<number>` (or `Closes #<number>`) to the PR body update so it links. Skip linking if not confident.
+            - If no issue is linked, gather candidates with:
+              - `gh issue list --state open --limit 20 --json number,title,body,labels`
+              - `gh issue list --state open --search "<PR title> in:title,body" --json number,title,body,labels`
+            - Rank candidates against PR title/body and touched file paths. If exactly one issue is an obvious match, append `Closes #<number>` to the PR body update so it links, or if it doesn't fully close the issue, append `Refers to #<number>`. Do not add anything if confidence is low or if a closing keyword already exists.
 
             Review this pull request and ONLY comment on:
             - Actual bugs, errors, or broken functionality
