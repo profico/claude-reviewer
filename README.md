@@ -10,6 +10,8 @@ A reusable GitHub Actions workflow for AI-powered code reviews using Claude, wit
 - Label-based activation
 - Inline and top-level comments
 - Focuses only on bugs, errors, and critical issues
+- Autofills PR descriptions from linked issues when context is missing
+- Can auto-link a matching open issue if the PR has none
 
 ## Quick Start
 
@@ -250,11 +252,13 @@ uses: profico/claude-reviewer/.github/workflows/review.yml@abc123def456
 
 1. External repository creates a PR
 2. Workflow checks PR for the `claude` label based on the `trigger` input
-3. Downloads framework-specific rules fromworkflow_ this repository
-4. Reads project-specific `.cursor/rules/*.mdc` files
-5. Claude reviews the PR with combined context
-6. Posts inline comments for specific issues
-7. Posts summary comment with overall feedback
+3. If the PR description lacks context, it pulls linked issues and updates the PR body with the missing details
+4. If no issue is linked, it searches for an obvious open issue match and links it
+5. Downloads framework-specific rules fromworkflow_ this repository
+6. Reads project-specific `.cursor/rules/*.mdc` files
+7. Claude reviews the PR with combined context
+8. Posts inline comments for specific issues
+9. Posts summary comment with overall feedback
 
 ## What Claude Reviews
 
