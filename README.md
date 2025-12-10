@@ -293,6 +293,7 @@ The workflow requires these permissions (must be explicitly granted in the calli
 - `contents: read` - To read the repository code
 - `pull-requests: write` - To post review comments
 - `id-token: write` - For OIDC authentication
+- `issues: write` - For context
 
 **Important:** You must add the `permissions` block to your workflow job as shown in all examples above. Reusable workflows do not inherit permissions by default.
 
