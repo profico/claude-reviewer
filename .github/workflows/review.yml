@@ -24,61 +24,61 @@ on:
         description: 'Anthropic API key for Claude'
 
 jobs:
-  # delete-old-claude-comments:
-  #   name: cleanup-old-claude-comments
-  #   runs-on: ubuntu-latest
-  #   permissions:
-  #     pull-requests: write
-  #
-  #   steps:
-  #     - name: Determine trigger
-  #       id: determine-trigger
-  #       uses: actions/github-script@v7
-  #       with:
-  #         script: |
-  #           const mode = '${{ inputs.trigger }}';
-  #           const { data: pr } = await github.rest.pulls.get({
-  #             owner: context.repo.owner,
-  #             repo: context.repo.repo,
-  #             pull_number: context.payload.pull_request.number
-  #           });
-  #           const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
-  #           let shouldRun = false;
-  #           if (mode === 'label') {
-  #             shouldRun = hasClaudeLabel;
-  #           } else {
-  #             shouldRun = true;
-  #           }
-  #           core.setOutput('has-claude-label', hasClaudeLabel.toString());
-  #           core.setOutput('should-run', shouldRun.toString());
-  #
-  #     - name: Clean up old comments
-  #       if: steps.determine-trigger.outputs.should-run == 'true'
-  #       uses: actions/github-script@v7
-  #       with:
-  #         script: |
-  #           const params = { pull_number: context.payload.pull_request.number, owner: context.repo.owner, repo: context.repo.repo }
-  #           console.log(`Checking PR ${params.pull_number} for claude[bot] comments...`);
-  #
-  #           const issueComments = await github.rest.issues.listComments({ issue_number: params.pull_number, owner: params.owner, repo: params.repo });
-  #           const reviewComments = await github.rest.pulls.listReviewComments(params);
-  #
-  #           let deletedCount = 0;
-  #
-  #           for (const comment of issueComments.data) {
-  #             if (comment.user.login === 'claude[bot]') {
-  #               await github.rest.issues.deleteComment({ issue_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
-  #               deletedCount++;
-  #             }
-  #           }
-  #
-  #           for (const comment of reviewComments.data) {
-  #             if (comment.user.login === 'claude[bot]') {
-  #               await github.rest.pulls.deleteReviewComment({ pull_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
-  #               deletedCount++;
-  #             }
-  #           }
-  #
+  delete-old-claude-comments:
+    name: cleanup-old-claude-comments
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+  
+    steps:
+      - name: Determine trigger
+        id: determine-trigger
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const mode = '${{ inputs.trigger }}';
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.payload.pull_request.number
+            });
+            const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
+            let shouldRun = false;
+            if (mode === 'label') {
+              shouldRun = hasClaudeLabel;
+            } else {
+              shouldRun = true;
+            }
+            core.setOutput('has-claude-label', hasClaudeLabel.toString());
+            core.setOutput('should-run', shouldRun.toString());
+  
+      - name: Clean up old comments
+        if: steps.determine-trigger.outputs.should-run == 'true'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const params = { pull_number: context.payload.pull_request.number, owner: context.repo.owner, repo: context.repo.repo }
+            console.log(`Checking PR ${params.pull_number} for claude[bot] comments...`);
+  
+            const issueComments = await github.rest.issues.listComments({ issue_number: params.pull_number, owner: params.owner, repo: params.repo });
+            const reviewComments = await github.rest.pulls.listReviewComments(params);
+  
+            let deletedCount = 0;
+  
+            for (const comment of issueComments.data) {
+              if (comment.user.login === 'claude[bot]') {
+                await github.rest.issues.deleteComment({ issue_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
+                deletedCount++;
+              }
+            }
+  
+            for (const comment of reviewComments.data) {
+              if (comment.user.login === 'claude[bot]') {
+                await github.rest.pulls.deleteReviewComment({ pull_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
+                deletedCount++;
+              }
+            }
+  
   review:
     name: claude-review-pull-request
     runs-on: ubuntu-latest
@@ -87,7 +87,6 @@ jobs:
       pull-requests: write
       id-token: write
       issues: write
-      actions: read
     steps:
       - uses: actions/checkout@v5
         with:
@@ -158,7 +157,8 @@ jobs:
         if: steps.determine-trigger.outputs.should-run == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          use_sticky_comment: true
+          # Currently broken, that's why we have the deletion step first
+          # use_sticky_comment: true 
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
