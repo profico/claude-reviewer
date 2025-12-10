@@ -48,7 +48,10 @@ jobs:
 3. Name: `ANTHROPIC_API_KEY`
 4. Value: Your Anthropic API key from console.anthropic.com
 
-### Step 3: Use the Label
+### Step 3: Add the Claude GitHub app
+https://github.com/apps/claude
+
+### Step 4: Use the Label
 You can control when reviews run with the `trigger` input:
 
 - `label`: run only when the `claude` label is present on the PR
