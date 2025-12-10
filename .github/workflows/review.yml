@@ -64,23 +64,54 @@ jobs:
               github.rest.issues.listComments,
               { issue_number: params.pull_number, owner: params.owner, repo: params.repo, per_page: 100 }
             );
+
+            const query = `
+              query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pr) {
+                    reviewThreads(first: 100, after: $cursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        isResolved
+                        comments(first: 100) {
+                          nodes { databaseId }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
+
+            const resolvedCommentIds = new Set();
+            let cursor = null;
+            let hasNextPage = true;
+
+            while (hasNextPage) {
+              const result = await github.graphql(query, {
+                owner: params.owner,
+                repo: params.repo,
+                pr: params.pull_number,
+                cursor
+              });
+              const threads = result.repository.pullRequest.reviewThreads;
+              for (const thread of threads.nodes) {
+                if (thread.isResolved) {
+                  for (const comment of thread.comments.nodes) {
+                    resolvedCommentIds.add(comment.databaseId);
+                  }
+                }
+              }
+              hasNextPage = threads.pageInfo.hasNextPage;
+              cursor = threads.pageInfo.endCursor;
+            }
+
+            console.log(`Found ${resolvedCommentIds.size} comments in resolved threads`);
+
             const reviewComments = await github.paginate(
               github.rest.pulls.listReviewComments,
               { ...params, per_page: 100 }
             );
-            const reviewThreads = await github.paginate(
-              github.rest.pulls.listReviewThreads,
-              { ...params, per_page: 100 }
-            );
-
-            const resolvedCommentIds = new Set();
-            for (const thread of reviewThreads) {
-              if (thread.resolved) {
-                for (const comment of thread.comments) {
-                  resolvedCommentIds.add(comment.id);
-                }
-              }
-            }
   
             let deletedCount = 0;
   
@@ -92,11 +123,15 @@ jobs:
             }
   
             for (const comment of reviewComments) {
-              if (comment.user.login === 'claude[bot]' && !resolvedCommentIds.has(comment.id)) {
+              const isResolved = resolvedCommentIds.has(comment.id);
+              console.log(`Comment ${comment.id} by ${comment.user.login}: resolved=${isResolved}`);
+              if (comment.user.login === 'claude[bot]' && !isResolved) {
                 await github.rest.pulls.deleteReviewComment({ pull_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
                 deletedCount++;
               }
             }
+
+            console.log(`Deleted ${deletedCount} comments, kept ${resolvedCommentIds.size} resolved`);
   
   review:
     name: claude-review-pull-request
