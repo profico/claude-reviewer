@@ -60,20 +60,39 @@ jobs:
             const params = { pull_number: context.payload.pull_request.number, owner: context.repo.owner, repo: context.repo.repo }
             console.log(`Checking PR ${params.pull_number} for claude[bot] comments...`);
   
-            const issueComments = await github.rest.issues.listComments({ issue_number: params.pull_number, owner: params.owner, repo: params.repo });
-            const reviewComments = await github.rest.pulls.listReviewComments(params);
+            const issueComments = await github.paginate(
+              github.rest.issues.listComments,
+              { issue_number: params.pull_number, owner: params.owner, repo: params.repo, per_page: 100 }
+            );
+            const reviewComments = await github.paginate(
+              github.rest.pulls.listReviewComments,
+              { ...params, per_page: 100 }
+            );
+            const reviewThreads = await github.paginate(
+              github.rest.pulls.listReviewThreads,
+              { ...params, per_page: 100 }
+            );
+
+            const resolvedCommentIds = new Set();
+            for (const thread of reviewThreads) {
+              if (thread.resolved) {
+                for (const comment of thread.comments) {
+                  resolvedCommentIds.add(comment.id);
+                }
+              }
+            }
   
             let deletedCount = 0;
   
-            for (const comment of issueComments.data) {
+            for (const comment of issueComments) {
               if (comment.user.login === 'claude[bot]') {
                 await github.rest.issues.deleteComment({ issue_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
                 deletedCount++;
               }
             }
   
-            for (const comment of reviewComments.data) {
-              if (comment.user.login === 'claude[bot]') {
+            for (const comment of reviewComments) {
+              if (comment.user.login === 'claude[bot]' && !resolvedCommentIds.has(comment.id)) {
                 await github.rest.pulls.deleteReviewComment({ pull_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
                 deletedCount++;
               }
