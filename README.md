@@ -32,6 +32,7 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
+      issues: write
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'next'  # Options: next, nest, react, generic
@@ -138,6 +139,7 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
+      issues: write
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'next'
@@ -162,6 +164,7 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
+      issues: write
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'nest'
@@ -186,6 +189,7 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
+      issues: write
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'react'
@@ -210,6 +214,7 @@ jobs:
       contents: read
       pull-requests: write
       id-token: write
+      issues: write
     uses: profico/claude-reviewer/.github/workflows/review.yml@main
     with:
       framework: 'generic'  # or omit this line, as 'generic' is the default
