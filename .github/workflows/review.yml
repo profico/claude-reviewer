@@ -9,6 +9,11 @@ on:
         required: false
         default: 'generic'
         description: 'Framework type: next, nest, react, generic, etc'
+      trigger:
+        type: string
+        required: false
+        default: 'auto'
+        description: "Trigger mode: 'label' or 'auto' (auto runs for all PRs)"
       pr_number:
         type: number
         required: true
@@ -20,98 +25,150 @@ on:
 
 jobs:
   delete-old-claude-comments:
-    # Currently, the claude-code-action does not support updating its own comments.
-    # https://github.com/anthropics/claude-code-action/issues/37
     name: cleanup-old-claude-comments
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
-
+  
     steps:
-      - name: Check for claude label
-        id: check-label
+      - name: Determine trigger
+        id: determine-trigger
         uses: actions/github-script@v7
         with:
           script: |
-            console.log(`Checking PR ${context.payload.pull_request.number} for 'claude' label...`);
+            const mode = '${{ inputs.trigger }}';
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.payload.pull_request.number
             });
             const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
-            console.log(`PR has ${pr.labels.length} labels: ${pr.labels.map(l => l.name).join(', ')}`);
-            console.log(`Has 'claude' label: ${hasClaudeLabel}`);
+            let shouldRun = false;
+            if (mode === 'label') {
+              shouldRun = hasClaudeLabel;
+            } else {
+              shouldRun = true;
+            }
             core.setOutput('has-claude-label', hasClaudeLabel.toString());
-
+            core.setOutput('should-run', shouldRun.toString());
+  
       - name: Clean up old comments
-        if: steps.check-label.outputs.has-claude-label == 'true'
+        if: steps.determine-trigger.outputs.should-run == 'true'
         uses: actions/github-script@v7
         with:
           script: |
             const params = { pull_number: context.payload.pull_request.number, owner: context.repo.owner, repo: context.repo.repo }
             console.log(`Checking PR ${params.pull_number} for claude[bot] comments...`);
+  
+            const issueComments = await github.paginate(
+              github.rest.issues.listComments,
+              { issue_number: params.pull_number, owner: params.owner, repo: params.repo, per_page: 100 }
+            );
 
-            // Delete issue comments (top-level comments)
-            const issueComments = await github.rest.issues.listComments({ issue_number: params.pull_number, owner: params.owner, repo: params.repo });
-            console.log(`Found ${issueComments.data.length} issue comments`);
+            const query = `
+              query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
+                repository(owner: $owner, name: $repo) {
+                  pullRequest(number: $pr) {
+                    reviewThreads(first: 100, after: $cursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        isResolved
+                        comments(first: 100) {
+                          nodes { databaseId }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            `;
 
-            // Delete review comments (inline comments)
-            const reviewComments = await github.rest.pulls.listReviewComments(params);
-            console.log(`Found ${reviewComments.data.length} review comments`);
+            const resolvedCommentIds = new Set();
+            let cursor = null;
+            let hasNextPage = true;
 
+            while (hasNextPage) {
+              const result = await github.graphql(query, {
+                owner: params.owner,
+                repo: params.repo,
+                pr: params.pull_number,
+                cursor
+              });
+              const threads = result.repository.pullRequest.reviewThreads;
+              for (const thread of threads.nodes) {
+                if (thread.isResolved) {
+                  for (const comment of thread.comments.nodes) {
+                    resolvedCommentIds.add(comment.databaseId);
+                  }
+                }
+              }
+              hasNextPage = threads.pageInfo.hasNextPage;
+              cursor = threads.pageInfo.endCursor;
+            }
+
+            console.log(`Found ${resolvedCommentIds.size} comments in resolved threads`);
+
+            const reviewComments = await github.paginate(
+              github.rest.pulls.listReviewComments,
+              { ...params, per_page: 100 }
+            );
+  
             let deletedCount = 0;
-
-            // Delete issue comments
-            for (const comment of issueComments.data) {
+  
+            for (const comment of issueComments) {
               if (comment.user.login === 'claude[bot]') {
-                console.log(`Deleting issue comment ${comment.id} from claude[bot]`);
                 await github.rest.issues.deleteComment({ issue_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
                 deletedCount++;
               }
             }
-
-            // Delete review comments
-            for (const comment of reviewComments.data) {
-              if (comment.user.login === 'claude[bot]') {
-                console.log(`Deleting review comment ${comment.id} from claude[bot]`);
+  
+            for (const comment of reviewComments) {
+              const isResolved = resolvedCommentIds.has(comment.id);
+              console.log(`Comment ${comment.id} by ${comment.user.login}: resolved=${isResolved}`);
+              if (comment.user.login === 'claude[bot]' && !isResolved) {
                 await github.rest.pulls.deleteReviewComment({ pull_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
                 deletedCount++;
               }
             }
 
-            console.log(`Deleted ${deletedCount} claude[bot] comments`);
+            console.log(`Deleted ${deletedCount} comments, kept ${resolvedCommentIds.size} resolved`);
+  
   review:
     name: claude-review-pull-request
     runs-on: ubuntu-latest
-    needs: delete-old-claude-comments
     permissions:
       contents: read
       pull-requests: write
       id-token: write
+      issues: write
     steps:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 1
 
-      - name: Check for claude label
-        id: check-label-review
+      - name: Determine trigger
+        id: determine-trigger
         uses: actions/github-script@v7
         with:
           script: |
-            console.log(`Checking PR ${context.payload.pull_request.number} for 'claude' label...`);
+            const mode = '${{ inputs.trigger }}';
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
               pull_number: context.payload.pull_request.number
             });
             const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
-            console.log(`PR has ${pr.labels.length} labels: ${pr.labels.map(l => l.name).join(', ')}`);
-            console.log(`Has 'claude' label: ${hasClaudeLabel}`);
+            let shouldRun = false;
+            if (mode === 'label') {
+              shouldRun = hasClaudeLabel;
+            } else {
+              shouldRun = true;
+            }
             core.setOutput('has-claude-label', hasClaudeLabel.toString());
+            core.setOutput('should-run', shouldRun.toString());
 
       - name: Read cursor rules
-        if: steps.check-label-review.outputs.has-claude-label == 'true'
+        if: steps.determine-trigger.outputs.should-run == 'true'
         id: cursor-rules
         run: |
           if [ -d ".cursor/rules" ] && [ "$(ls .cursor/rules/*.mdc 2>/dev/null | wc -l)" -gt 0 ]; then
@@ -126,7 +183,7 @@ jobs:
 
       # Download framework-specific rules from this repository
       - name: Download framework rules
-        if: steps.check-label-review.outputs.has-claude-label == 'true'
+        if: steps.determine-trigger.outputs.should-run == 'true'
         id: framework-rules
         run: |
           FRAMEWORK="${{ inputs.framework }}"
@@ -151,13 +208,28 @@ jobs:
           echo "${delimiter}" >> $GITHUB_OUTPUT
 
       - uses: anthropics/claude-code-action@v1
-        if: steps.check-label-review.outputs.has-claude-label == 'true'
+        if: steps.determine-trigger.outputs.should-run == 'true'
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          # Currently broken, that's why we have the deletion step first
+          # use_sticky_comment: true 
           prompt: |
             REPO: ${{ github.repository }}
             PR NUMBER: ${{ github.event.pull_request.number }}
             FRAMEWORK: ${{ inputs.framework }}
+
+            PR CONTEXT COMPLETION:
+            - Fetch PR metadata with `gh pr view ${{ github.event.pull_request.number }} --json title,body,closingIssuesReferences,number,files`.
+            - For each linked issue, fetch `title` and `body` with `gh issue view <issue> --json title,body,labels,number`.
+            - If the PR description is empty, placeholder text, or missing a what/why summary, build a concise markdown body that includes: summary, linked issues, requirements or acceptance criteria from the issue, risks/affected areas, and testing status (say "Testing: not provided" if unknown).
+            - If the PR already has meaningful content, append an "Issue context" section with any missing details instead of overwriting user text.
+            - Update the PR body with `gh pr edit ${{ github.event.pull_request.number }} --body "<markdown>"` only when you have new context to add.
+            - Whenever you modify the PR body, add a new section called "Additional context (Claude)" with whatever you're adding.
+            - If no issue is linked, gather candidates with:
+              - `gh issue list --state open --limit 20 --json number,title,body,labels`
+              - `gh issue list --state open --search "<PR title> in:title,body" --json number,title,body,labels`
+            - Rank candidates against PR title/body and touched file paths. If exactly one issue is an obvious match, append `Closes #<number>` to the PR body so it links, or if it doesn't fully close the issue, append `Refers to #<number>`. Do not add anything if confidence is low or if a closing keyword already exists.
+            - If we're confident and we add an issue, add some context about it to the PR body.
 
             Review this pull request and ONLY comment on:
             - Actual bugs, errors, or broken functionality
@@ -194,4 +266,4 @@ jobs:
             Only post GitHub comments - don't submit review text as messages.
 
           claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh pr edit:*)"
