@@ -2,268 +2,233 @@ name: Claude Code Review
 
 # Make this workflow callable by other repositories
 on:
-  workflow_call:
-    inputs:
-      framework:
-        type: string
-        required: false
-        default: 'generic'
-        description: 'Framework type: next, nest, react, generic, etc'
-      trigger:
-        type: string
-        required: false
-        default: 'auto'
-        description: "Trigger mode: 'label' or 'auto' (auto runs for all PRs)"
-      pr_number:
-        type: number
-        required: true
-        description: 'Pull request number to review'
-    secrets:
-      ANTHROPIC_API_KEY:
-        required: true
-        description: 'Anthropic API key for Claude'
+    workflow_call:
+        inputs:
+            framework:
+                type: string
+                required: false
+                default: "generic"
+                description: "Framework type: next, nest, react, generic, etc"
+            trigger:
+                type: string
+                required: false
+                default: "auto"
+                description: "Trigger mode: 'label' or 'auto' (auto runs for all PRs)"
+            pr_number:
+                type: number
+                required: false
+                description: "[DEPRECATED] Pull request number to review - no longer used, workflow uses context.payload.pull_request.number automatically"
+        secrets:
+            ANTHROPIC_API_KEY:
+                required: true
+                description: "Anthropic API key for Claude"
 
 jobs:
-  delete-old-claude-comments:
-    name: cleanup-old-claude-comments
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-  
-    steps:
-      - name: Determine trigger
-        id: determine-trigger
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const mode = '${{ inputs.trigger }}';
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number
-            });
-            const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
-            let shouldRun = false;
-            if (mode === 'label') {
-              shouldRun = hasClaudeLabel;
-            } else {
-              shouldRun = true;
-            }
-            core.setOutput('has-claude-label', hasClaudeLabel.toString());
-            core.setOutput('should-run', shouldRun.toString());
-  
-      - name: Clean up old comments
-        if: steps.determine-trigger.outputs.should-run == 'true'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const params = { pull_number: context.payload.pull_request.number, owner: context.repo.owner, repo: context.repo.repo }
-            console.log(`Checking PR ${params.pull_number} for claude[bot] comments...`);
-  
-            const issueComments = await github.paginate(
-              github.rest.issues.listComments,
-              { issue_number: params.pull_number, owner: params.owner, repo: params.repo, per_page: 100 }
-            );
+    review:
+        name: claude-review-pull-request
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+            pull-requests: write
+            id-token: write
+            issues: write
+        steps:
+            - uses: actions/checkout@v5
+              with:
+                  fetch-depth: 1
 
-            const query = `
-              query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
-                repository(owner: $owner, name: $repo) {
-                  pullRequest(number: $pr) {
-                    reviewThreads(first: 100, after: $cursor) {
-                      pageInfo { hasNextPage endCursor }
-                      nodes {
-                        isResolved
-                        comments(first: 100) {
-                          nodes { databaseId }
-                        }
+            - name: Determine trigger
+              id: determine-trigger
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      const mode = '${{ inputs.trigger }}';
+                      const { data: pr } = await github.rest.pulls.get({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        pull_number: context.payload.pull_request.number
+                      });
+                      const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
+                      let shouldRun = false;
+                      if (mode === 'label') {
+                        shouldRun = hasClaudeLabel;
+                      } else {
+                        shouldRun = true;
                       }
-                    }
-                  }
-                }
-              }
-            `;
+                      core.setOutput('has-claude-label', hasClaudeLabel.toString());
+                      core.setOutput('should-run', shouldRun.toString());
 
-            const resolvedCommentIds = new Set();
-            let cursor = null;
-            let hasNextPage = true;
+            - name: Read cursor rules
+              if: steps.determine-trigger.outputs.should-run == 'true'
+              id: cursor-rules
+              run: |
+                  if [ -d ".cursor/rules" ] && [ "$(ls .cursor/rules/*.mdc 2>/dev/null | wc -l)" -gt 0 ]; then
+                    delimiter="$(openssl rand -hex 8)"
+                    echo "content<<${delimiter}" >> $GITHUB_OUTPUT
+                    cat .cursor/rules/*.mdc >> $GITHUB_OUTPUT
+                    echo "" >> $GITHUB_OUTPUT
+                    echo "${delimiter}" >> $GITHUB_OUTPUT
+                  else
+                    echo "content=No cursor rules found" >> $GITHUB_OUTPUT
+                  fi
 
-            while (hasNextPage) {
-              const result = await github.graphql(query, {
-                owner: params.owner,
-                repo: params.repo,
-                pr: params.pull_number,
-                cursor
-              });
-              const threads = result.repository.pullRequest.reviewThreads;
-              for (const thread of threads.nodes) {
-                if (thread.isResolved) {
-                  for (const comment of thread.comments.nodes) {
-                    resolvedCommentIds.add(comment.databaseId);
-                  }
-                }
-              }
-              hasNextPage = threads.pageInfo.hasNextPage;
-              cursor = threads.pageInfo.endCursor;
-            }
+            # Download framework-specific rules from this repository
+            - name: Download framework rules
+              if: steps.determine-trigger.outputs.should-run == 'true'
+              id: framework-rules
+              run: |
+                  FRAMEWORK="${{ inputs.framework }}"
+                  RULES_URL="https://raw.githubusercontent.com/profico/claude-reviewer/main/rules/${FRAMEWORK}.md"
 
-            console.log(`Found ${resolvedCommentIds.size} comments in resolved threads`);
+                  echo "Attempting to download rules for framework: ${FRAMEWORK}"
+                  echo "URL: ${RULES_URL}"
 
-            const reviewComments = await github.paginate(
-              github.rest.pulls.listReviewComments,
-              { ...params, per_page: 100 }
-            );
-  
-            let deletedCount = 0;
-  
-            for (const comment of issueComments) {
-              if (comment.user.login === 'claude[bot]') {
-                await github.rest.issues.deleteComment({ issue_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
-                deletedCount++;
-              }
-            }
-  
-            for (const comment of reviewComments) {
-              const isResolved = resolvedCommentIds.has(comment.id);
-              console.log(`Comment ${comment.id} by ${comment.user.login}: resolved=${isResolved}`);
-              if (comment.user.login === 'claude[bot]' && !isResolved) {
-                await github.rest.pulls.deleteReviewComment({ pull_number: params.pull_number, owner: params.owner, repo: params.repo, comment_id: comment.id });
-                deletedCount++;
-              }
-            }
+                  delimiter="$(openssl rand -hex 8)"
+                  echo "content<<${delimiter}" >> $GITHUB_OUTPUT
 
-            console.log(`Deleted ${deletedCount} comments, kept ${resolvedCommentIds.size} resolved`);
-  
-  review:
-    name: claude-review-pull-request
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: write
-      id-token: write
-      issues: write
-    steps:
-      - uses: actions/checkout@v5
-        with:
-          fetch-depth: 1
+                  # Try to download framework-specific rules
+                  if curl -f -s "${RULES_URL}" -o /tmp/framework-rules.md 2>/dev/null; then
+                    echo "Successfully downloaded ${FRAMEWORK} rules"
+                    cat /tmp/framework-rules.md >> $GITHUB_OUTPUT
+                  else
+                    echo "No framework-specific rules found for: ${FRAMEWORK}" >> $GITHUB_OUTPUT
+                    echo "Using default review guidelines." >> $GITHUB_OUTPUT
+                  fi
 
-      - name: Determine trigger
-        id: determine-trigger
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const mode = '${{ inputs.trigger }}';
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: context.payload.pull_request.number
-            });
-            const hasClaudeLabel = pr.labels.some(label => label.name === 'claude');
-            let shouldRun = false;
-            if (mode === 'label') {
-              shouldRun = hasClaudeLabel;
-            } else {
-              shouldRun = true;
-            }
-            core.setOutput('has-claude-label', hasClaudeLabel.toString());
-            core.setOutput('should-run', shouldRun.toString());
+                  echo "" >> $GITHUB_OUTPUT
+                  echo "${delimiter}" >> $GITHUB_OUTPUT
 
-      - name: Read cursor rules
-        if: steps.determine-trigger.outputs.should-run == 'true'
-        id: cursor-rules
-        run: |
-          if [ -d ".cursor/rules" ] && [ "$(ls .cursor/rules/*.mdc 2>/dev/null | wc -l)" -gt 0 ]; then
-            delimiter="$(openssl rand -hex 8)"
-            echo "content<<${delimiter}" >> $GITHUB_OUTPUT
-            cat .cursor/rules/*.mdc >> $GITHUB_OUTPUT
-            echo "" >> $GITHUB_OUTPUT
-            echo "${delimiter}" >> $GITHUB_OUTPUT
-          else
-            echo "content=No cursor rules found" >> $GITHUB_OUTPUT
-          fi
+            - name: Fetch existing inline comments
+              if: steps.determine-trigger.outputs.should-run == 'true'
+              id: existing-comments
+              uses: actions/github-script@v7
+              with:
+                  script: |
+                      const params = {
+                        pull_number: context.payload.pull_request.number,
+                        owner: context.repo.owner,
+                        repo: context.repo.repo
+                      };
 
-      # Download framework-specific rules from this repository
-      - name: Download framework rules
-        if: steps.determine-trigger.outputs.should-run == 'true'
-        id: framework-rules
-        run: |
-          FRAMEWORK="${{ inputs.framework }}"
-          RULES_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/rules/${FRAMEWORK}.md"
-          
-          echo "Attempting to download rules for framework: ${FRAMEWORK}"
-          echo "URL: ${RULES_URL}"
-          
-          delimiter="$(openssl rand -hex 8)"
-          echo "content<<${delimiter}" >> $GITHUB_OUTPUT
-          
-          # Try to download framework-specific rules
-          if curl -f -s "${RULES_URL}" -o /tmp/framework-rules.md 2>/dev/null; then
-            echo "Successfully downloaded ${FRAMEWORK} rules"
-            cat /tmp/framework-rules.md >> $GITHUB_OUTPUT
-          else
-            echo "No framework-specific rules found for: ${FRAMEWORK}" >> $GITHUB_OUTPUT
-            echo "Using default review guidelines." >> $GITHUB_OUTPUT
-          fi
-          
-          echo "" >> $GITHUB_OUTPUT
-          echo "${delimiter}" >> $GITHUB_OUTPUT
+                      console.log(`Fetching existing review comments for PR ${params.pull_number}...`);
 
-      - uses: anthropics/claude-code-action@v1
-        if: steps.determine-trigger.outputs.should-run == 'true'
-        with:
-          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
-          # Currently broken, that's why we have the deletion step first
-          # use_sticky_comment: true 
-          prompt: |
-            REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
-            FRAMEWORK: ${{ inputs.framework }}
+                      const reviewComments = await github.paginate(
+                        github.rest.pulls.listReviewComments,
+                        { ...params, per_page: 100 }
+                      );
 
-            PR CONTEXT COMPLETION:
-            - Fetch PR metadata with `gh pr view ${{ github.event.pull_request.number }} --json title,body,closingIssuesReferences,number,files`.
-            - For each linked issue, fetch `title` and `body` with `gh issue view <issue> --json title,body,labels,number`.
-            - If the PR description is empty, placeholder text, or missing a what/why summary, build a concise markdown body that includes: summary, linked issues, requirements or acceptance criteria from the issue, risks/affected areas, and testing status (say "Testing: not provided" if unknown).
-            - If the PR already has meaningful content, append an "Issue context" section with any missing details instead of overwriting user text.
-            - Update the PR body with `gh pr edit ${{ github.event.pull_request.number }} --body "<markdown>"` only when you have new context to add.
-            - Whenever you modify the PR body, add a new section called "Additional context (Claude)" with whatever you're adding.
-            - If no issue is linked, gather candidates with:
-              - `gh issue list --state open --limit 20 --json number,title,body,labels`
-              - `gh issue list --state open --search "<PR title> in:title,body" --json number,title,body,labels`
-            - Rank candidates against PR title/body and touched file paths. If exactly one issue is an obvious match, append `Closes #<number>` to the PR body so it links, or if it doesn't fully close the issue, append `Refers to #<number>`. Do not add anything if confidence is low or if a closing keyword already exists.
-            - If we're confident and we add an issue, add some context about it to the PR body.
+                      const claudeComments = reviewComments
+                        .filter(comment => comment.user.login === 'claude[bot]')
+                        .map(comment => ({
+                          path: comment.path,
+                          line: comment.line,
+                          body: comment.body,
+                          position: comment.position,
+                          start_line: comment.start_line,
+                          side: comment.side
+                        }));
 
-            Review this pull request and ONLY comment on:
-            - Actual bugs, errors, or broken functionality
-            - Security vulnerabilities
-            - Critical performance issues that will cause problems
-            - Type errors or runtime errors
+                      console.log(`Found ${claudeComments.length} existing claude[bot] inline comments`);
 
-            CRITICAL RULES:
-            - DO NOT praise or compliment code
-            - DO NOT comment on lines that are correct or well-written
-            - DO NOT suggest improvements unless they fix a bug or improve the code
-            - For each comment, explain WHY it's a bug/error and what will break
-            - Keep comments concise and technical - no fluff
-            - If there are no bugs, post nothing
-            - Ignore generated files, lock files, and build artifacts
+                      const commentsJson = JSON.stringify(claudeComments, null, 2);
+                      core.setOutput('comments', commentsJson);
 
-            Codebase context:
-            - Follow CLAUDE.md (if available), and the project rules.
-            - You can find the project rules as markdown files in the .cursor/rules directory.
-            - Treat CLAUDE.md and the rules like gospel.
+                      return claudeComments;
 
-            CURSOR RULES CONTENT:
-            ${{ steps.cursor-rules.outputs.content }}
+            - uses: anthropics/claude-code-action@v1
+              if: steps.determine-trigger.outputs.should-run == 'true'
+              with:
+                  anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+                  # Currently broken
+                  # use_sticky_comment: true
+                  prompt: |
+                      REPO: ${{ github.repository }}
+                      PR NUMBER: ${{ github.event.pull_request.number }}
+                      FRAMEWORK: ${{ inputs.framework }}
 
-            FRAMEWORK-SPECIFIC RULES (${{ inputs.framework }}):
-            ${{ steps.framework-rules.outputs.content }}
+                      CHAIN OF THOUGHT ANALYSIS:
+                      Before performing any actions, you MUST think through the review process step-by-step in <thinking> tags.
+                      Your analysis should include:
+                      1. Understanding the PR's purpose and scope
+                      2. Identifying all files changed and their relationships
+                      3. Analyzing each file for potential issues (bugs, security, performance, type errors)
+                      4. Cross-referencing with existing comments to avoid duplicates
+                      5. Determining the precise line ranges for each issue found
+                      6. Deciding on the priority and severity of each issue
 
-            Note: The PR branch is already checked out in the current working directory.
+                      After your <thinking> analysis, take the appropriate actions (leave comments, update PR description, etc).
+                      This structured thinking ensures thorough, accurate reviews that catch all issues in one pass.
 
-            Use `gh pr comment` for top-level feedback.
-            Use `mcp__github_inline_comment__create_inline_comment` to highlight specific code issues.
-            If you already left an inline comment, don't leave another one. You may link to the existing comment from
-            the new summary if it's still relevant.
-            Only post GitHub comments - don't submit review text as messages.
+                      PR CONTEXT COMPLETION:
+                      - Fetch PR metadata with `gh pr view ${{ github.event.pull_request.number }} --json title,body,closingIssuesReferences,number,files`.
+                      - For each linked issue, fetch `title` and `body` with `gh issue view <issue> --json title,body,labels,number`.
+                      - If the PR description is empty, placeholder text, or missing a what/why summary, build a concise markdown body that includes: summary, linked issues, requirements or acceptance criteria from the issue, risks/affected areas, and testing status (say "Testing: not provided" if unknown).
+                      - If the PR already has meaningful content, append an "Issue context" section with any missing details instead of overwriting user text.
+                      - Update the PR body with `gh pr edit ${{ github.event.pull_request.number }} --body "<markdown>"` only when you have new context to add.
+                      - Whenever you modify the PR body, add a new section called "Additional context (Claude)" with whatever you're adding.
+                      - If no issue is linked, gather candidates with:
+                        - `gh issue list --state open --limit 20 --json number,title,body,labels`
+                        - `gh issue list --state open --search "<PR title> in:title,body" --json number,title,body,labels`
+                      - Rank candidates against PR title/body and touched file paths. If exactly one issue is an obvious match, append `Closes #<number>` to the PR body so it links, or if it doesn't fully close the issue, append `Refers to #<number>`. Do not add anything if confidence is low or if a closing keyword already exists.
+                      - If we're confident and we add an issue, add some context about it to the PR body.
 
-          claude_args: |
-            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh pr edit:*)"
+                      REVIEW PROCESS:
+                      1. First, analyze the entire PR in <thinking> tags following the chain of thought process above
+                      2. Then, take actions based on your analysis
+                      3. Be thorough - examine every changed file systematically
+                      4. Don't rush - missing issues on first pass requires re-runs
+
+                      Review this pull request and ONLY comment on:
+                      - Actual bugs, errors, or broken functionality
+                      - Security vulnerabilities
+                      - Critical performance issues that will cause problems
+                      - Type errors or runtime errors
+
+                      CRITICAL RULES:
+                      - DO NOT praise or compliment code
+                      - DO NOT comment on lines that are correct or well-written
+                      - DO NOT suggest improvements unless they fix a bug or improve the code
+                      - For each comment, explain WHY it's a bug/error and what will break
+                      - Keep comments concise and technical - no fluff
+                      - If there are no bugs, post nothing
+                      - Ignore generated files, lock files, and build artifacts
+
+                      INLINE COMMENT LINE RANGE RULES:
+                      When leaving inline comments, be PRECISE about line ranges:
+                      - If the issue is on a SINGLE line, comment on ONLY that line
+                      - If the issue spans multiple lines, include ONLY the lines directly involved in the problem
+                      - DO NOT arbitrarily select a fixed number of lines (e.g., always 4 lines)
+                      - DO NOT include surrounding context lines that aren't part of the actual issue
+                      - Example: For a typo on line 10, comment on line 10 only, not lines 10-13
+                      - Example: For a logic error spanning lines 15-17, comment on lines 15-17, not 14-18
+                      - Be surgical and precise - highlight EXACTLY what's wrong, nothing more
+
+                      DUPLICATE DETECTION:
+                      Before leaving any inline comment, you MUST check against the existing comments below.
+                      A comment is a duplicate if it addresses the same issue on the same file/line, even if worded differently.
+                      DO NOT leave duplicate comments. If an existing comment already covers the issue, skip it.
+
+                      EXISTING INLINE COMMENTS FROM PREVIOUS RUNS:
+                      ${{ steps.existing-comments.outputs.comments }}
+
+                      Codebase context:
+                      - Follow CLAUDE.md (if available), and the project rules.
+                      - You can find the project rules as markdown files in the .cursor/rules directory.
+                      - Treat CLAUDE.md and the rules like gospel.
+
+                      CURSOR RULES CONTENT:
+                      ${{ steps.cursor-rules.outputs.content }}
+
+                      FRAMEWORK-SPECIFIC RULES (${{ inputs.framework }}):
+                      ${{ steps.framework-rules.outputs.content }}
+
+                      Note: The PR branch is already checked out in the current working directory.
+
+                      Use `gh pr comment` for top-level feedback.
+                      Use `mcp__github_inline_comment__create_inline_comment` to highlight specific code issues.
+                      If you already left an inline comment, don't leave another one. You may link to the existing comment from
+                      the new summary if it's still relevant.
+                      Only post GitHub comments - don't submit review text as messages.
+
+                  claude_args: |
+                      --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*),Bash(gh issue view:*),Bash(gh issue list:*),Bash(gh pr edit:*)"
