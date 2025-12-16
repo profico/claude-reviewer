@@ -146,6 +146,19 @@ jobs:
                       PR NUMBER: ${{ github.event.pull_request.number }}
                       FRAMEWORK: ${{ inputs.framework }}
 
+                      CHAIN OF THOUGHT ANALYSIS:
+                      Before performing any actions, you MUST think through the review process step-by-step in <thinking> tags.
+                      Your analysis should include:
+                      1. Understanding the PR's purpose and scope
+                      2. Identifying all files changed and their relationships
+                      3. Analyzing each file for potential issues (bugs, security, performance, type errors)
+                      4. Cross-referencing with existing comments to avoid duplicates
+                      5. Determining the precise line ranges for each issue found
+                      6. Deciding on the priority and severity of each issue
+
+                      After your <thinking> analysis, take the appropriate actions (leave comments, update PR description, etc).
+                      This structured thinking ensures thorough, accurate reviews that catch all issues in one pass.
+
                       PR CONTEXT COMPLETION:
                       - Fetch PR metadata with `gh pr view ${{ github.event.pull_request.number }} --json title,body,closingIssuesReferences,number,files`.
                       - For each linked issue, fetch `title` and `body` with `gh issue view <issue> --json title,body,labels,number`.
@@ -158,6 +171,12 @@ jobs:
                         - `gh issue list --state open --search "<PR title> in:title,body" --json number,title,body,labels`
                       - Rank candidates against PR title/body and touched file paths. If exactly one issue is an obvious match, append `Closes #<number>` to the PR body so it links, or if it doesn't fully close the issue, append `Refers to #<number>`. Do not add anything if confidence is low or if a closing keyword already exists.
                       - If we're confident and we add an issue, add some context about it to the PR body.
+
+                      REVIEW PROCESS:
+                      1. First, analyze the entire PR in <thinking> tags following the chain of thought process above
+                      2. Then, take actions based on your analysis
+                      3. Be thorough - examine every changed file systematically
+                      4. Don't rush - missing issues on first pass requires re-runs
 
                       Review this pull request and ONLY comment on:
                       - Actual bugs, errors, or broken functionality
@@ -173,6 +192,16 @@ jobs:
                       - Keep comments concise and technical - no fluff
                       - If there are no bugs, post nothing
                       - Ignore generated files, lock files, and build artifacts
+
+                      INLINE COMMENT LINE RANGE RULES:
+                      When leaving inline comments, be PRECISE about line ranges:
+                      - If the issue is on a SINGLE line, comment on ONLY that line
+                      - If the issue spans multiple lines, include ONLY the lines directly involved in the problem
+                      - DO NOT arbitrarily select a fixed number of lines (e.g., always 4 lines)
+                      - DO NOT include surrounding context lines that aren't part of the actual issue
+                      - Example: For a typo on line 10, comment on line 10 only, not lines 10-13
+                      - Example: For a logic error spanning lines 15-17, comment on lines 15-17, not 14-18
+                      - Be surgical and precise - highlight EXACTLY what's wrong, nothing more
 
                       DUPLICATE DETECTION:
                       Before leaving any inline comment, you MUST check against the existing comments below.
