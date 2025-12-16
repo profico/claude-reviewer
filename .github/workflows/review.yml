@@ -78,7 +78,7 @@ jobs:
               id: framework-rules
               run: |
                   FRAMEWORK="${{ inputs.framework }}"
-                  RULES_URL="https://raw.githubusercontent.com/${{ github.repository }}/main/rules/${FRAMEWORK}.md"
+                  RULES_URL="https://raw.githubusercontent.com/profico/claude-reviewer/main/rules/${FRAMEWORK}.md"
 
                   echo "Attempting to download rules for framework: ${FRAMEWORK}"
                   echo "URL: ${RULES_URL}"
