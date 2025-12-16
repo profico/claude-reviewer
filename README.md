@@ -40,7 +40,6 @@ jobs:
     with:
       framework: 'next'  # Options: next, nest, react, generic
       trigger: 'auto'    # Options: label, auto (auto runs on every PR)
-      pr_number: ${{ github.event.pull_request.number }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -69,7 +68,6 @@ For simple setups, keep using `on: pull_request` as in the examples above; you d
 |-------|----------|---------|-------------|
 | `framework` | No | `generic` | Framework type: `next`, `nest`, `react`, `generic` |
 | `trigger` | No | `auto` | Trigger mode: `label` (requires `claude` label) or `auto` (runs on every PR) |
-| `pr_number` | Yes | - | Pull request number to review |
 
 ## Required Secrets
 
@@ -147,7 +145,6 @@ jobs:
     with:
       framework: 'next'
       trigger: 'auto'
-      pr_number: ${{ github.event.pull_request.number }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -172,7 +169,6 @@ jobs:
     with:
       framework: 'nest'
       trigger: 'auto'
-      pr_number: ${{ github.event.pull_request.number }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -197,7 +193,6 @@ jobs:
     with:
       framework: 'react'
       trigger: 'auto'
-      pr_number: ${{ github.event.pull_request.number }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
@@ -222,7 +217,6 @@ jobs:
     with:
       framework: 'generic'  # or omit this line, as 'generic' is the default
       trigger: 'auto'
-      pr_number: ${{ github.event.pull_request.number }}
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```

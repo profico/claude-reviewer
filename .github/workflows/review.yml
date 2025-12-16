@@ -16,8 +16,8 @@ on:
                 description: "Trigger mode: 'label' or 'auto' (auto runs for all PRs)"
             pr_number:
                 type: number
-                required: true
-                description: "Pull request number to review"
+                required: false
+                description: "[DEPRECATED] Pull request number to review - no longer used, workflow uses context.payload.pull_request.number automatically"
         secrets:
             ANTHROPIC_API_KEY:
                 required: true
