@@ -6,12 +6,15 @@ A reusable GitHub Actions workflow for AI-powered code reviews using Claude, wit
 
 - Framework-specific review rules (Next.js, NestJS, React, and more)
 - Reads project-specific cursor rules
-- Automated cleanup of old comments
-- Label-based activation
+- **Duplicate detection** - Avoids leaving duplicate comments on subsequent runs
+- **Chain of thought analysis** - Thorough, systematic review process that catches all issues in one pass
+- **Precise line range selection** - Comments highlight only the exact lines with issues
+- Label-based activation (optional)
 - Inline and top-level comments
 - Focuses only on bugs, errors, and critical issues
 - Autofills PR descriptions from linked issues when context is missing
 - Can auto-link a matching open issue if the PR has none (title/body/file aware)
+- Preserves comment history across workflow runs
 
 ## Quick Start
 
@@ -262,11 +265,13 @@ uses: profico/claude-reviewer/.github/workflows/review.yml@abc123def456
 2. Workflow checks PR for the `claude` label based on the `trigger` input
 3. If the PR description lacks context, it pulls linked issues and updates the PR body with the missing details
 4. If no issue is linked, it searches open issues (title/body and touched files) for a clear match and links it
-5. Downloads framework-specific rules fromworkflow_ this repository
+5. Downloads framework-specific rules from this repository
 6. Reads project-specific `.cursor/rules/*.mdc` files
-7. Claude reviews the PR with combined context
-8. Posts inline comments for specific issues
-9. Posts summary comment with overall feedback
+7. **Fetches existing Claude comments** to prevent duplicates
+8. Claude performs **chain of thought analysis**, systematically reviewing all changed files
+9. **Cross-references findings** against existing comments to avoid duplicates
+10. Posts inline comments for specific issues with **precise line ranges**
+11. Posts summary comment with overall feedback
 
 ## What Claude Reviews
 
@@ -285,6 +290,17 @@ Claude will NOT comment on:
 - Working code that could be "better"
 - Generated files and lock files
 - Compliments or praise
+- Issues already covered by existing comments (duplicate detection)
+
+## Review Quality
+
+Claude uses **chain of thought prompting** to ensure comprehensive reviews:
+
+- Analyzes the entire PR systematically before commenting
+- Identifies all files and their relationships
+- Cross-references with existing comments to avoid duplicates
+- Determines precise line ranges for each issue
+- Catches issues in a single pass, reducing the need for re-runs
 
 ## Permissions
 
