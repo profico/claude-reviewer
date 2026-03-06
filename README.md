@@ -68,6 +68,7 @@ For simple setups, keep using `on: pull_request` as in the examples above; you d
 |-------|----------|---------|-------------|
 | `framework` | No | `generic` | Framework type: `next`, `nest`, `react`, `generic` |
 | `trigger` | No | `auto` | Trigger mode: `label` (requires `claude` label) or `auto` (runs on every PR) |
+| `runs_on` | No | `ubuntu-latest` | Pick different runner |
 
 ## Required Secrets
 
