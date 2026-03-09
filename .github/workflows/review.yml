@@ -18,6 +18,11 @@ on:
                 type: number
                 required: false
                 description: "[DEPRECATED] Pull request number to review - no longer used, workflow uses context.payload.pull_request.number automatically"
+            runs_on:
+                type: string
+                required: false
+                default: "ubuntu-latest"
+                description: "Defaults to GitHub's ubuntu-latest but sometimes you want it to run on some other runners"
         secrets:
             ANTHROPIC_API_KEY:
                 required: true
@@ -26,7 +31,7 @@ on:
 jobs:
     review:
         name: claude-review-pull-request
-        runs-on: ubuntu-latest
+        runs-on: ${{ inputs.runs_on }}
         permissions:
             contents: read
             pull-requests: write
