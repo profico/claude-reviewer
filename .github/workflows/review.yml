@@ -144,6 +144,7 @@ jobs:
               if: steps.determine-trigger.outputs.should-run == 'true'
               with:
                   anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+                  show_full_output: true
                   # Currently broken
                   # use_sticky_comment: true
                   prompt: |
